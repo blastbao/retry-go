@@ -2,88 +2,71 @@ package retry
 
 import (
 	"time"
-
-	"github.com/juju/errgo"
 )
 
 const (
 	DefaultMaxTries = 3
-	DefaultTimeout  = time.Duration(15 * time.Second)
+	DefaultTimeout  = 15 * time.Second
+	DefaultDelayDuration    = 3 * time.Second
 )
 
-// Not is a helper to invert another .
-func Not(checker func(err error) bool) func(err error) bool {
-	return func(err error) bool {
-		return !checker(err)
-	}
+type retryOptions struct {
+	maxTries        uint32
+	timeout         time.Duration
+
+	delayFunc   DelayFunc
+
+	// 错误(码) 是否应该重试
+	allowCodes []uint32				// P1
+	denyCodes  []uint32				// P2
 }
 
-type RetryOption func(options *retryOptions)
+func newRetryOptions(options ...Option) *retryOptions {
+
+	opts := &retryOptions{
+		timeout:         DefaultTimeout,
+		maxTries:        DefaultMaxTries,
+		delayFunc: func(tries uint32) time.Duration { return DefaultDelayDuration },
+	}
+
+	for _, option := range options {
+		option(opts)
+	}
+
+	return opts
+}
+
+type Option func(options *retryOptions)
 
 // Timeout specifies the maximum time that should be used before aborting the retry loop.
 // Note that this does not abort the operation in progress.
-func Timeout(d time.Duration) RetryOption {
+func WithTimeout(d time.Duration) Option {
 	return func(options *retryOptions) {
-		options.Timeout = d
+		options.timeout = d
 	}
 }
 
 // MaxTries specifies the maximum number of times op will be called by Do().
-func MaxTries(tries int) RetryOption {
+func WithMaxTries(tries uint32) Option {
 	return func(options *retryOptions) {
-		options.MaxTries = tries
+		options.maxTries = tries
 	}
 }
 
-// RetryChecker defines whether the given error is an error that can be retried.
-func RetryChecker(checker func(err error) bool) RetryOption {
+func WithAllowCodes(codes ...uint32) Option {
 	return func(options *retryOptions) {
-		options.Checker = checker
+		options.allowCodes = codes
 	}
 }
 
-func Sleep(d time.Duration) RetryOption {
+func WithDenyCodes(codes ...uint32) Option {
 	return func(options *retryOptions) {
-		options.Sleep = d
+		options.denyCodes = codes
 	}
 }
 
-// AfterRetry is called after a retry and can be used e.g. to emit events.
-func AfterRetry(afterRetry func(err error)) RetryOption {
+func WithDelayFunc(df DelayFunc) Option {
 	return func(options *retryOptions) {
-		options.AfterRetry = afterRetry
+		options.delayFunc = df
 	}
-}
-
-// AfterRetryLimit is called after a retry limit is reached and can be used
-// e.g. to emit events.
-func AfterRetryLimit(afterRetryLimit func(err error)) RetryOption {
-	return func(options *retryOptions) {
-		options.AfterRetryLimit = afterRetryLimit
-	}
-}
-
-type retryOptions struct {
-	Timeout         time.Duration
-	MaxTries        int
-	Checker         func(err error) bool
-	Sleep           time.Duration
-	AfterRetry      func(err error)
-	AfterRetryLimit func(err error)
-}
-
-func newRetryOptions(options ...RetryOption) retryOptions {
-	state := retryOptions{
-		Timeout:         DefaultTimeout,
-		MaxTries:        DefaultMaxTries,
-		Checker:         errgo.Any,
-		AfterRetry:      func(err error) {},
-		AfterRetryLimit: func(err error) {},
-	}
-
-	for _, option := range options {
-		option(&state)
-	}
-
-	return state
 }

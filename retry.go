@@ -1,64 +1,64 @@
 package retry
 
 import (
+	"context"
 	"time"
-
-	"github.com/juju/errgo"
 )
 
-// Do performs the given operation. Based on the options, it can retry the operation,
-// if it failed.
-//
-// The following options are supported:
-// * RetryChecker(func(err error) bool) - If this func returns true for the returned error, the operation is tried again
-// * MaxTries(int) - Maximum number of calls to op() before aborting with MaxRetriesReached
-// * Timeout(time.Duration) - Maximum number of time to try to perform this op before aborting with TimeoutReached
-// * Sleep(time.Duration) - time to sleep after error failed op()
-//
-// Defaults:
-//  Timeout = 15 seconds
-//  MaxRetries = 5
-//  Retryer = errgo.Any
-//  Sleep = No sleep
-//
-func Do(op func() error, retryOptions ...RetryOption) error {
-	options := newRetryOptions(retryOptions...)
 
+func Do(fn func() error, retryOptions ...Option) error {
+	return DoCtx(context.Background(), func(_ context.Context) error {
+		return fn()
+	}, retryOptions...)
+}
+
+func DoCtx(ctx context.Context, fn func(context.Context) error, retryOptions ...Option) error {
+
+	opts := newRetryOptions(retryOptions...)
+
+	// timeout trigger
 	var timeout <-chan time.Time
-	if options.Timeout > 0 {
-		timeout = time.After(options.Timeout)
+	if opts.timeout > 0 {
+		timeout = time.After(opts.timeout)
 	}
 
-	tryCounter := 0
+	attempts := uint32(0)
 	for {
-		// Check if we reached the timeout
-		select {
-		case <-timeout:
-			return errgo.Mask(TimeoutError, errgo.Any)
-		default:
-		}
 
-		// Execute the op
-		tryCounter++
-		lastError := op()
-		options.AfterRetry(lastError)
-
-		if lastError != nil {
-			if options.Checker != nil && options.Checker(lastError) {
-				// Check max retries
-				if tryCounter >= options.MaxTries {
-					options.AfterRetryLimit(lastError)
-					return errgo.WithCausef(lastError, MaxRetriesReachedError, "retry limit reached (%d/%d)", tryCounter, options.MaxTries)
+		err := fn(ctx)
+		if err == nil { // no error, return directly
+			return nil
+		} else if e, ok := err.(Err); ok { // if err is Err type, then check code whitelist
+			if len(opts.allowCodes) != 0 {
+				if !Contains(opts.allowCodes, e.Code) {
+					return err
 				}
-
-				if options.Sleep > 0 {
-					time.Sleep(options.Sleep)
+			} else if len(opts.denyCodes) != 0 {
+				if Contains(opts.denyCodes, e.Code) {
+					return err
 				}
-				continue
 			}
-
-			return errgo.Mask(lastError, errgo.Any)
+		} else { // if err is not type Err, just retry
 		}
-		return nil
+
+		attempts++
+		if attempts >= opts.maxTries { // reach limit
+			return err
+		}
+
+		// wait for the next duration or until the context is done, whichever comes first
+		t := time.NewTimer(opts.delayFunc(attempts))
+		select {
+		case <-t.C: // delay duration elapsed, continue loop and retry
+		case <-timeout:
+			return TimeoutError
+		case <-ctx.Done():
+			// context cancelled, kill the timer if it hasn't fired, and return the last error we got
+			if !t.Stop() {
+				<-t.C
+			}
+			return err
+		}
 	}
+
 }
