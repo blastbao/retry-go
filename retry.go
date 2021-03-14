@@ -13,18 +13,9 @@ func Do(fn func() error, retryOptions ...Option) error {
 }
 
 func DoCtx(ctx context.Context, fn func(context.Context) error, retryOptions ...Option) error {
-
 	opts := newRetryOptions(retryOptions...)
-
-	// timeout trigger
-	var timeout <-chan time.Time
-	if opts.timeout > 0 {
-		timeout = time.After(opts.timeout)
-	}
-
 	attempts := uint32(0)
 	for {
-
 		err := fn(ctx)
 		if err == nil { // no error, return directly
 			return nil
@@ -50,8 +41,6 @@ func DoCtx(ctx context.Context, fn func(context.Context) error, retryOptions ...
 		t := time.NewTimer(opts.delayFunc(attempts))
 		select {
 		case <-t.C: // delay duration elapsed, continue loop and retry
-		case <-timeout:
-			return TimeoutError
 		case <-ctx.Done():
 			// context cancelled, kill the timer if it hasn't fired, and return the last error we got
 			if !t.Stop() {

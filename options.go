@@ -6,14 +6,11 @@ import (
 
 const (
 	DefaultMaxTries = 3
-	DefaultTimeout  = 15 * time.Second
 	DefaultDelayDuration    = 3 * time.Second
 )
 
 type retryOptions struct {
 	maxTries        uint32
-	timeout         time.Duration
-
 	delayFunc   DelayFunc
 
 	// 错误(码) 是否应该重试
@@ -24,7 +21,6 @@ type retryOptions struct {
 func newRetryOptions(options ...Option) *retryOptions {
 
 	opts := &retryOptions{
-		timeout:         DefaultTimeout,
 		maxTries:        DefaultMaxTries,
 		delayFunc: func(tries uint32) time.Duration { return DefaultDelayDuration },
 	}
@@ -38,15 +34,6 @@ func newRetryOptions(options ...Option) *retryOptions {
 
 type Option func(options *retryOptions)
 
-// Timeout specifies the maximum time that should be used before aborting the retry loop.
-// Note that this does not abort the operation in progress.
-func WithTimeout(d time.Duration) Option {
-	return func(options *retryOptions) {
-		options.timeout = d
-	}
-}
-
-// MaxTries specifies the maximum number of times op will be called by Do().
 func WithMaxTries(tries uint32) Option {
 	return func(options *retryOptions) {
 		options.maxTries = tries
